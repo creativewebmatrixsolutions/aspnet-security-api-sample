@@ -15,12 +15,14 @@ using System.Linq;
 using System.Text;
 using System.Web;
 using System.Collections.Generic;
+using System.Configuration;
 
 namespace MicrosoftGraph_Security_API_Sample.Controllers
 {
     public class HomeController : Controller
     {
         GraphService graphService = new GraphService();
+        private List<string> userScopesList = new List<string>();
 
         private AlertFilter AlertFilters
         {
@@ -61,8 +63,19 @@ namespace MicrosoftGraph_Security_API_Sample.Controllers
             }
             else
             {
-                Session["ProviderList"] = await GetProviderList();
-            }               
+                string userScopes = Startup.UserScopes as string;
+                if (!string.IsNullOrEmpty(userScopes))
+                {
+                    userScopesList = new List<string>(userScopes.Split(' '));
+                    if (!userScopesList.Contains("SecurityEvents.Read.All") &&
+                            !userScopesList.Contains("SecurityEvents.ReadWrite.All"))
+                    {
+                        return View("AdminConsent");
+                    }
+                }
+                await SetProviderList();
+
+            }
             return View("Graph");
         }
 
@@ -70,43 +83,56 @@ namespace MicrosoftGraph_Security_API_Sample.Controllers
         {
             base.Initialize(requestContext);
             Session["AlertFilters"] = Session["AlertFilters"] as AlertFilter ?? new AlertFilter { Top = 1 };
-           
-
+            Session["GetSubscriptionResults"] = null;
+            Session["SubscriptionResult"] = null;
+            Session["SubscriptionFilters"] = new SubscriptionFilters();
+            Session["UpdateAlertResults"] = null;
         }
 
         /// <summary>
         ///  Get the provider list
         /// </summary>
-        /// <param name="alertFilter"></param>
         /// <returns></returns>
-        public async Task<string[]> GetProviderList()
+        public async Task SetProviderList()
         {
             try
             {
                 AlertFilter alertFilter = new AlertFilter { Top = 1 };
-                
+
                 var Top1Alerts = await graphService.GetAlerts(alertFilter);
-                string[] providers = new string[Top1Alerts.Count+1];
+                string[] providers = new string[Top1Alerts.Count + 1];
                 int index = 0;
                 providers[index++] = "All";
                 if (Top1Alerts != null)
                 {
-                    foreach(Alert alert in Top1Alerts)
+                    foreach (Alert alert in Top1Alerts)
                     {
                         providers[index++] = alert.VendorInformation.Provider;
                     }
                 }
 
-                ViewBag.ProviderList = providers;
-                return providers;
-
+                Session["ProviderList"] = providers;
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
 
             }
-            return null;
         }
+
+        /// <summary>
+        ///  Checks the provider list
+        /// </summary>
+
+        /// <returns></returns>
+        public async Task CheckProviderList()
+        {
+            string[] providerList = Session["ProviderList"] as string[];
+            if (providerList == null || (providerList.Length == 1 && providerList[0] == "All"))
+            {
+                await SetProviderList();
+            }
+        }
+
 
         /// <summary>
         ///  Get the alerts based on filters
@@ -118,6 +144,7 @@ namespace MicrosoftGraph_Security_API_Sample.Controllers
         {
             try
             {
+                await CheckProviderList();
                 Session["CurrentAlert"] = null;
                 ISecurityAlertsCollectionPage securityAlerts = await graphService.GetAlerts(alertFilter);
 
@@ -130,7 +157,7 @@ namespace MicrosoftGraph_Security_API_Sample.Controllers
                 queryBuilder.Append($".Top({alertFilter.Top}).GetAsync()'");
                 queryBuilder.Append("<br />");
 
-               if (!string.IsNullOrEmpty(alertFilter.FilteredQuery))
+                if (!string.IsNullOrEmpty(alertFilter.FilteredQuery))
                 {
                     queryBuilder.Append($"REST query: '<a href=\"https://developer.microsoft.com/en-us/graph/graph-explorer?request=security/alerts?$filter={HttpUtility.UrlEncode(alertFilter.FilteredQuery)}%26$top={alertFilter.Top}&&method=GET&version=beta&GraphUrl=https://graph.microsoft.com\" target=\"_blank\">https://graph.microsoft.com/beta/security/alerts?");
 
@@ -183,7 +210,13 @@ namespace MicrosoftGraph_Security_API_Sample.Controllers
         {
             try
             {
+                await CheckProviderList();
                 Session["GetAlertResults"] = null;
+                if (!userScopesList.Contains("SecurityEvents.ReadWrite.All"))
+                {
+                    return View("AdminConsent");
+                }
+
                 UpdateAlertFilters = updateAlertModel;
                 var queryBuilder = new StringBuilder();
 
@@ -206,7 +239,7 @@ namespace MicrosoftGraph_Security_API_Sample.Controllers
                 if (string.IsNullOrEmpty(updateAlertModel.AlertId))
                 {
                     updateAlertResultModel.Error = "Please enter valid Alert Id";
-                    ViewBag.UpdateAlertResults = updateAlertResultModel;
+                    Session["UpdateAlertResults"] = updateAlertResultModel;
 
                     return View("Graph");
                 }
@@ -215,7 +248,7 @@ namespace MicrosoftGraph_Security_API_Sample.Controllers
                 if (alert == null)
                 {
                     updateAlertResultModel.Error = $"No alert matching this ID {updateAlertModel.AlertId} was found";
-                    ViewBag.UpdateAlertResults = updateAlertResultModel;
+                    Session["UpdateAlertResults"] = updateAlertResultModel;
 
                     return View("Graph");
                 }
@@ -245,8 +278,8 @@ namespace MicrosoftGraph_Security_API_Sample.Controllers
                     Provider = alertUpdated.VendorInformation.Provider,
                     Severity = alertUpdated.Severity
                 };
-               
-                ViewBag.UpdateAlertResults = updateAlertResultModel;
+
+                Session["UpdateAlertResults"] = updateAlertResultModel;
 
                 return View("Graph");
             }
@@ -264,7 +297,7 @@ namespace MicrosoftGraph_Security_API_Sample.Controllers
                 return RedirectToAction("Index", "Error", new { message = Resource.Error_Message + Request.RawUrl + ": " + ex.Message });
             }
         }
-   
+
         /// <summary>
         /// Gets the device details which helps in further investigation of alert
         /// </summary>
@@ -291,6 +324,7 @@ namespace MicrosoftGraph_Security_API_Sample.Controllers
         {
             try
             {
+                await CheckProviderList();
                 var alert = await graphService.GetAlertById(id);
 
                 if (alert == null)
@@ -305,7 +339,6 @@ namespace MicrosoftGraph_Security_API_Sample.Controllers
 
                 queryBuilder.Append($"REST query: '<a href=\"https://developer.microsoft.com/en-us/graph/graph-explorer?request=security/alerts/{id}&method=GET&version=beta&GraphUrl=https://graph.microsoft.com\" target=\"_blank\">https://graph.microsoft.com/beta/security/alerts/{id}/</a>'");
                 queryBuilder.Append("<br />");
-
 
                 var alertModel = new AlertModel
                 {
@@ -359,6 +392,7 @@ namespace MicrosoftGraph_Security_API_Sample.Controllers
         [Authorize]
         public async Task<ActionResult> Subscribe(SubscriptionFilters subscriptionFilters)
         {
+            await CheckProviderList();
             Session["CurrentAlert"] = null;
             SubscriptionFilters = subscriptionFilters;
             try
@@ -369,7 +403,7 @@ namespace MicrosoftGraph_Security_API_Sample.Controllers
                     {
                         Error = "Please select at least one property/criterion for subscribing to alert notifications"
                     };
-                    ViewBag.GetSubscriptionResults = subscriptionResultModel;
+                    Session["SubscriptionResult"] = subscriptionResultModel;
                 }
                 else
                 {
@@ -381,11 +415,14 @@ namespace MicrosoftGraph_Security_API_Sample.Controllers
 
                     queryBuilder.Append($"REST query: POST '<a>https://graph.microsoft.com/beta/subscriptions</a>'");
                     queryBuilder.Append("<br />");
+                    queryBuilder.Append($"Request Body: ResourceUri = {subscription.Resource}; ExpirationDateTime = {subscription.ExpirationDateTime}; ");
+
 
                     if (subscription != null)
                     {
                         var subscriptionResultModel = new SubscriptionResultModel()
                         {
+                            Query = queryBuilder.ToString(),
                             Id = subscription.Id,
                             Resource = subscription.Resource,
                             NotificationUrl = subscription.NotificationUrl,
@@ -393,14 +430,14 @@ namespace MicrosoftGraph_Security_API_Sample.Controllers
                             ChangeType = subscription.ChangeType,
                             ClientState = subscription.ClientState
                         };
-                        ViewBag.GetSubscriptionResults = subscriptionResultModel;
+                        Session["SubscriptionResult"] = subscriptionResultModel;
                     }
                     else
                     {
-                        ViewBag.GetSubscriptionResults = null;
+                        Session["SubscriptionResult"] = null;
 
                     }
-                }   
+                }
                 Session["GetAlertResults"] = null;
                 return View("Graph");
             }
@@ -419,6 +456,56 @@ namespace MicrosoftGraph_Security_API_Sample.Controllers
             }
         }
 
+        /// <summary>
+        /// Gets the alert by alertid
+        /// </summary>
+        /// <param name="id">Id of the alert</param>
+        /// <returns></returns>
+        [Authorize]
+        public async Task<ActionResult> ListSubscriptions()
+        {
+            await CheckProviderList();
+            Session["CurrentAlert"] = null;
+            Session["GetAlertResults"] = null;
+            try
+            {
+                IGraphServiceSubscriptionsCollectionPage subscriptions = await graphService.ListSubscriptions();
+
+                var queryBuilder = new StringBuilder();
+                queryBuilder.Append("SDK query: 'graphClient.Subscriptions.Request().GetAsync()'");
+                queryBuilder.Append("<br />");
+                queryBuilder.Append($"REST query: '<a href=\"https://developer.microsoft.com/en-us/graph/graph-explorer?request=subscriptions&&method=GET&version=beta&GraphUrl=https://graph.microsoft.com\" target=\"_blank\">https://graph.microsoft.com/beta/subscriptions</a>'");
+
+                var subscriptionCollection = new SubscriptionCollection
+                {
+                    Query = queryBuilder.ToString(),
+                    Subscriptions = subscriptions?.Select(sa => new SubscriptionResultModel
+                    {
+                        Id = sa.Id,
+                        Resource = sa.Resource,
+                        ExpirationDateTime = sa.ExpirationDateTime,
+                        ClientState = sa.ClientState,
+                        NotificationUrl = sa.NotificationUrl
+                    }) ?? Enumerable.Empty<SubscriptionResultModel>()
+                };
+                Session["GetSubscriptionResults"] = subscriptionCollection;
+
+                return View("Graph");
+            }
+            catch (ServiceException se)
+            {
+                if (se.Error.Message == Resource.Error_AuthChallengeNeeded)
+                {
+                    return new EmptyResult();
+                }
+
+                return RedirectToAction("Index", "Error", new { message = Resource.Error_Message + Request.RawUrl + ": " + se.Error.Message });
+            }
+            catch (Exception ex)
+            {
+                return RedirectToAction("Index", "Error", new { message = Resource.Error_Message + Request.RawUrl + ": " + ex.Message });
+            }
+        }
 
         public ActionResult About()
         {

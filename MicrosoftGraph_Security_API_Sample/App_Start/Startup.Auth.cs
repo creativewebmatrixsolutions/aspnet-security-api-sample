@@ -4,21 +4,24 @@
 */
 
 using System.Web;
+using System.Web.Mvc;
 using Owin;
 using Microsoft.Owin.Security;
 using Microsoft.Owin.Security.Cookies;
 using Microsoft.Owin.Security.OpenIdConnect;
 using System.Configuration;
+using System.Web.Mvc;
 using System.Threading.Tasks;
 using MicrosoftGraph_Security_API_Sample.TokenStorage;
 using System.IdentityModel.Tokens;
 using System.IdentityModel.Claims;
 using Microsoft.Identity.Client;
 using MicrosoftGraph_Security_API_Sample.Controllers;
+using System.Collections.Generic;
 
 namespace MicrosoftGraph_Security_API_Sample
 {
-    public partial class Startup
+    public partial class Startup 
     {
 
         // The appId is used by the application to uniquely identify itself to Azure AD.
@@ -29,7 +32,8 @@ namespace MicrosoftGraph_Security_API_Sample
         private static string appSecret = ConfigurationManager.AppSettings["ida:AppSecret"];
         private static string redirectUri = ConfigurationManager.AppSettings["ida:RedirectUri"];
         private static string graphScopes = ConfigurationManager.AppSettings["ida:GraphScopes"];
-        HomeController homeController = new HomeController();
+
+        public static string UserScopes = string.Empty;
 
         public async void ConfigureAuth(IAppBuilder app)
         {
@@ -50,16 +54,7 @@ namespace MicrosoftGraph_Security_API_Sample
                     Scope = "openid email profile offline_access " + graphScopes,
                     TokenValidationParameters = new TokenValidationParameters
                     {
-                        ValidateIssuer = false,
-                        // In a real application you would use IssuerValidator for additional checks, 
-                        // like making sure the user's organization has signed up for your app.
-                        //     IssuerValidator = (issuer, token, tvp) =>
-                        //     {
-                        //         if (MyCustomTenantValidation(issuer)) 
-                        //             return issuer;
-                        //         else
-                        //             throw new SecurityTokenInvalidIssuerException("Invalid issuer");
-                        //     },
+                        ValidateIssuer = false
                     },
                     Notifications = new OpenIdConnectAuthenticationNotifications
                     {
@@ -78,7 +73,8 @@ namespace MicrosoftGraph_Security_API_Sample
                                 null);
                             string[] scopes = graphScopes.Split(new char[] { ' ' });
 
-                            AuthenticationResult result = await cca.AcquireTokenByAuthorizationCodeAsync(code, scopes);
+                            AuthenticationResult result = await cca.AcquireTokenByAuthorizationCodeAsync(code, scopes); 
+                            UserScopes = string.Join(" ", result.Scopes);
                         },
              
                     }
